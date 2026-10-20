@@ -57,6 +57,7 @@ function runPage(file, search) {
   const context = {
     location: {
       href: `http://192.0.2.10:8080/${file}${search}`,
+      pathname: `/${file}`,
       protocol: 'http:', host: '192.0.2.10:8080', search,
     },
     document: { getElementById: () => ({ textContent: '' }) },

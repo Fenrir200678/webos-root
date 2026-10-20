@@ -2,6 +2,7 @@ import json
 import os
 import unittest
 from unittest.mock import Mock
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -50,6 +51,77 @@ class LaunchTelemetryTest(unittest.TestCase):
             self.assertEqual(result.status, 204)
         self.assertEqual(self.tracker.wait_for_launch_response(1), response)
         self.assertFalse(self.tracker.wait_for_all(0))
+
+    def test_token_path_is_required(self):
+        root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "wwwroot")
+        token_tracker = slopbro.RequestedFilesTracker(["index-webos26.html"])
+        token_server = slopbro.start_http_server(
+            root, token_tracker, ["index-webos26.html"],
+            allow_embedded_assets=False, allow_filesystem_fallback=True,
+            bind_host="127.0.0.1", preferred_port=0, token="secret-token",
+        )
+        base = "http://127.0.0.1:%d/" % token_server.server_port
+        try:
+            with self.assertRaises(HTTPError) as root_error:
+                urlopen(base + "index-webos26.html")
+            self.assertEqual(root_error.exception.code, 404)
+
+            with self.assertRaises(HTTPError) as wrong_token:
+                urlopen(base + "p/wrong/index-webos26.html")
+            self.assertEqual(wrong_token.exception.code, 404)
+
+            with urlopen(base + "p/secret-token/index-webos26.html") as response:
+                self.assertTrue(response.read())
+            self.assertTrue(token_tracker.wait_for_all(1))
+        finally:
+            token_server.shutdown()
+            token_server.server_close()
+
+
+class SystemInfoTest(unittest.TestCase):
+    class Client(object):
+        def __init__(self, response):
+            self.response = response
+
+        def request(self, uri, payload, timeout):
+            self.uri = uri
+            self.payload = payload
+            self.timeout = timeout
+            return self.response
+
+    def make_engine(self):
+        engine = RootEngine.__new__(RootEngine)
+        engine.log = Mock()
+        return engine
+
+    def test_reads_payload_system_info(self):
+        engine = self.make_engine()
+        info = engine.read_system_info(self.Client({
+            "type": "response",
+            "payload": {
+                "modelName": "OLED65G49LS",
+                "firmwareVersion": "43.21.73",
+                "sdkVersion": "11.2.0-3703",
+            },
+        }))
+        self.assertEqual(info["modelName"], "OLED65G49LS")
+        self.assertEqual(info["firmwareVersion"], "43.21.73")
+        self.assertEqual(info["sdkVersion"], "11.2.0-3703")
+
+    def test_missing_system_info_does_not_raise(self):
+        engine = self.make_engine()
+        info = engine.read_system_info(self.Client({"type": "error", "error": "Denied"}))
+        self.assertEqual(info, {})
+        engine.validate_sdk_version(info)
+
+    def test_rejects_non_webos26_sdk(self):
+        engine = self.make_engine()
+        with self.assertRaisesRegex(WizardError, "webOS 26"):
+            engine.validate_sdk_version({"sdkVersion": "10.0.0"})
+
+    def test_accepts_webos26_sdk(self):
+        engine = self.make_engine()
+        engine.validate_sdk_version({"sdkVersion": "11.2.0-3703"})
 
 
 class WizardCompatibilityFlowTest(unittest.TestCase):

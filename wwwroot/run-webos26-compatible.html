@@ -4,7 +4,8 @@
 <h2 id="status">Preparing compatible webOS 26 loader…</h2>
 <script>
 (function () {
-  var base = location.protocol + "//" + location.host + "/";
+  var base = location.protocol + "//" + location.host +
+    location.pathname.replace(/[^/]*$/, "");
   var targetDir = "/media/internal/downloads";
   var trustedServicePath = "/usr/palm/services/com.palm.service.devmode";
   var files = [

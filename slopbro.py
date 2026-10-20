@@ -769,6 +769,7 @@ def make_tracking_handler(
     tracked_files,
     allow_embedded_assets,
     allow_filesystem_fallback,
+    token=None,
 ):
     if SimpleHTTPRequestHandler is None:
         raise RuntimeError("no stdlib HTTP request handler available")
@@ -789,6 +790,11 @@ def make_tracking_handler(
                 raw_path = unquote(raw_path, errors="surrogatepass")
             except TypeError:
                 raw_path = unquote(raw_path)
+            if token is not None:
+                prefix = "/p/%s/" % token
+                if not raw_path.startswith(prefix):
+                    return None
+                raw_path = "/" + raw_path[len(prefix):]
             raw_path = posixpath.normpath(raw_path)
             if raw_path in ("", "/", "."):
                 return ENTRY_PAGE
@@ -876,6 +882,7 @@ def start_http_server(
     allow_filesystem_fallback,
     bind_host="0.0.0.0",
     preferred_port=8080,
+    token=None,
 ):
     """Start a tiny static file server rooted at root_dir."""
     handler = make_tracking_handler(
@@ -884,6 +891,7 @@ def start_http_server(
         tracked_files,
         allow_embedded_assets,
         allow_filesystem_fallback,
+        token=token,
     )
     server = None
     for port in (preferred_port, 0):

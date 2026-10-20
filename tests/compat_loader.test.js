@@ -76,7 +76,8 @@ function runLoader(options) {
 
   const context = {
     location: {
-      href: 'http://192.0.2.10:8080/run-webos26-compatible.html',
+      href: 'http://192.0.2.10:8080/p/test-token/run-webos26-compatible.html',
+      pathname: '/p/test-token/run-webos26-compatible.html',
       protocol: 'http:',
       host: '192.0.2.10:8080',
     },
@@ -156,6 +157,8 @@ assertFailedWithoutRun(runLoader({
 const happy = runLoader({});
 assert.equal(happy.downloads.length, 4);
 assert.equal(happy.runCalls.length, 1);
+assert.ok(happy.downloads.every(call =>
+  call.payload.target.startsWith('http://192.0.2.10:8080/p/test-token/')));
 assert.match(
   happy.runCalls[0].payload.inputParams,
   /a b c \/usr\/palm\/services\/com\.palm\.service\.devmode -- \/tmp\/cgroup dummy \/media\/internal\/downloads/

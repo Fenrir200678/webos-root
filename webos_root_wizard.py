@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import queue
+import secrets
 import socket
 import sys
 import threading
@@ -148,6 +149,7 @@ class RootEngine(object):
         self.status = status
         self.data_dir = app_data_dir()
         self.wwwroot = os.path.join(bundle_root(), "wwwroot")
+        self.token = secrets.token_urlsafe(16)
 
     @property
     def key_file(self):
@@ -227,13 +229,73 @@ class RootEngine(object):
             app.get("id") for app in apps if isinstance(app, dict) and app.get("id")
         )
 
+    def read_system_info(self, client):
+        """Read model/firmware/SDK when the TV exposes them; never block on it."""
+        try:
+            response = client.request(
+                "ssap://com.webos.service.tv.systemproperty/getSystemInfo",
+                {"keys": ["modelName", "firmwareVersion", "sdkVersion"]},
+                timeout=10.0,
+            )
+        except Exception as exc:
+            self.log("Could not read system information: %s" % exc)
+            return {}
+
+        if not isinstance(response, dict) or response.get("type") == "error":
+            error = response.get("error") if isinstance(response, dict) else response
+            self.log("Could not read system information: %s" % error)
+            return {}
+
+        payload = response.get("payload")
+        candidates = [response]
+        if isinstance(payload, dict):
+            candidates.insert(0, payload)
+            nested = payload.get("systemInfo")
+            if isinstance(nested, dict):
+                candidates.insert(0, nested)
+
+        info = {}
+        for key in ("modelName", "firmwareVersion", "sdkVersion"):
+            for candidate in candidates:
+                value = candidate.get(key)
+                if isinstance(value, dict):
+                    value = value.get("value")
+                if value:
+                    info[key] = str(value)
+                    break
+        return info
+
+    def validate_sdk_version(self, system_info):
+        sdk = system_info.get("sdkVersion")
+        if sdk and not sdk.startswith("11."):
+            raise WizardError(
+                "This wizard targets webOS 26 (SDK 11), but the TV reports "
+                "SDK %s. Stop and use a matching guide." % sdk
+            )
+
     def check_prerequisites(self):
         self.status("Checking the TV")
         client = self.connect()
         try:
             app_ids = self.list_app_ids(client)
+            system_info = self.read_system_info(client)
         finally:
             client.close()
+        if system_info:
+            self.log(
+                "TV model: %s; firmware: %s; SDK: %s"
+                % (
+                    system_info.get("modelName", "unknown"),
+                    system_info.get("firmwareVersion", "unknown"),
+                    system_info.get("sdkVersion", "unknown"),
+                )
+            )
+        else:
+            self.log(
+                "System information was not reported; continuing without the "
+                "webOS 26 SDK guard."
+            )
+        self.validate_sdk_version(system_info)
         if VOICE_APP not in app_ids:
             raise WizardError(
                 "The system Voice Assistant (voiceweb) was not found on the TV. "
@@ -272,6 +334,7 @@ class RootEngine(object):
             allow_filesystem_fallback=True,
             bind_host=self.local_ip,
             preferred_port=8080,
+            token=self.token,
         )
         return server, tracker
 
@@ -289,9 +352,10 @@ class RootEngine(object):
         client = None
         try:
             server, tracker = self.start_server(COMPAT_FILES)
-            page_url = "http://%s:%d/run-webos26-compatible.html?attempt=%d" % (
+            page_url = "http://%s:%d/p/%s/run-webos26-compatible.html?attempt=%d" % (
                 self.local_ip,
                 server.server_port,
+                self.token,
                 int(time.time() * 1000),
             )
             self.log("Compatible loader ready: %s" % page_url)

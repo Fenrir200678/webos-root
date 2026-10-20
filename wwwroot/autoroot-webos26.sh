@@ -11,6 +11,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(dirname -- "${0}")}"
 DEBUG="${DEBUG:-}"
 IPK_SRC="${IPK_SRC:-"${SCRIPT_DIR}/hbchannel.ipk"}"
 IPK_URL='https://github.com/webosbrew/webos-homebrew-channel/releases/download/v0.7.3/org.webosbrew.hbchannel_0.7.3_all.ipk'
+IPK_SHA256='d10bf3c753551d7c72fb7a92b20fcd2317e502a220ac668ba8e76f6ea78b363c'
 SCRIPT_NAME='SlopBro'
 
 is_root() {
@@ -122,9 +123,99 @@ download_file() {
     fi
 
     if [ -n "${CURL_INSECURE}" ]; then
-        curl -k -L -o "${dl_path}" -- "${dl_url}"
+        log 'Warning: --curl-insecure disables TLS verification; the pinned SHA-256 still protects the IPK.'
+        curl -k -L --fail --proto '=https' -o "${dl_path}" -- "${dl_url}"
     else
-        curl -L -o "${dl_path}" -- "${dl_url}"
+        curl -L --fail --proto '=https' -o "${dl_path}" -- "${dl_url}"
+    fi
+}
+
+hash_file() {
+    hash_path="${1}"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "${hash_path}" | cut -d ' ' -f 1
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "${hash_path}" | sed -n -e 's/^.*= //p'
+    else
+        return 1
+    fi
+}
+
+verify_ipk() {
+    ipk_path="${1}"
+    actual="$(hash_file "${ipk_path}")"
+
+    if [ -z "${actual}" ]; then
+        error 'No SHA-256 tool available; refusing to install the IPK'
+        exit 1
+    fi
+
+    if [ "${actual}" != "${IPK_SHA256}" ]; then
+        error "IPK SHA-256 mismatch: expected '${IPK_SHA256}', got '${actual}'. Refusing to install."
+        exit 1
+    fi
+
+    log 'IPK SHA-256 verified.'
+}
+
+create_backup_dir() {
+    stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+    backup_dir="/media/internal/slopbro-backup-${stamp}"
+
+    if ! mkdir -p "${backup_dir}"; then
+        error "Failed to create backup directory '${backup_dir}'; refusing to modify the TV"
+        exit 1
+    fi
+
+    log "Emergency backup directory: ${backup_dir}"
+    {
+        echo 'SlopBro emergency backup'
+        echo "date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        echo 'These are the original devmode files, not a full system backup.'
+    } > "${backup_dir}/README.txt" || true
+}
+
+backup_path() {
+    backup_src="${1}"
+    backup_name="${2:-$(basename -- "${backup_src}")}"
+
+    if [ ! -e "${backup_src}" ]; then
+        debug "No original to back up at '${backup_src}'"
+        return 0
+    fi
+
+    backup_dest="${backup_dir}/${backup_name}"
+
+    if cp -a -- "${backup_src}" "${backup_dest}" 2>/dev/null; then
+        log "Backed up '${backup_src}' to '${backup_dest}'"
+        return 0
+    fi
+
+    rm -rf -- "${backup_dest}"
+
+    if cp -pR -- "${backup_src}" "${backup_dest}" 2>/dev/null; then
+        log "Backed up '${backup_src}' to '${backup_dest}' (no xattrs)"
+        return 0
+    fi
+
+    error "Failed to back up '${backup_src}'; refusing to modify the TV"
+    exit 1
+}
+
+harden_hbchannel_network() {
+    if touch -- '/var/luna/preferences/webosbrew_telnet_disabled'; then
+        log 'HBC normal telnet disabled for subsequent boots (webosbrew_telnet_disabled); the failsafe may still open a temporary root telnet after a startup crash.'
+    else
+        log 'Warning: could not create webosbrew_telnet_disabled.'
+    fi
+
+    if [ -n "${TELNET}" ]; then
+        log 'Warning: --telnet started a temporary root shell in this boot; it will be disabled on the next boot.'
+    fi
+
+    if [ -e '/var/luna/preferences/webosbrew_sshd_enabled' ]; then
+        log 'HBC SSH flag is present; secure authorized_keys and change any default password before exposing the TV.'
     fi
 }
 
@@ -252,35 +343,43 @@ elevate_hbchannel() {
 
 # Set up persistent root access
 perform_root() {
+    create_backup_dir
+    backup_path '/var/luna/preferences/devmode_enabled'
+    backup_path "${sd_script}"
+    backup_path "${sd_sig}"
+    if [ -e "${sd_script}.backup" ]; then
+        backup_path "${sd_script}.backup" 'start-devmode.sh.previous-backup'
+    fi
+
     enable_devmode
 
     restart_appinstalld
 
-    sleep_secs_base=2
-    retries=3
+    attempts=0
+    max_attempts=2
+    while [ "${attempts}" -lt "${max_attempts}" ]; do
+        attempts=$((attempts + 1))
 
-    for retry in $(seq "${retries}" -1 0); do
         if install_ipk "${ipk}"; then
-            # success
             break
         fi
 
-        if [ "${retry}" -eq 0 ]; then
-            error 'Retries exhausted: giving up'
+        if [ "${attempts}" -ge "${max_attempts}" ]; then
+            error 'IPK installation failed after one retry; giving up'
             exit 1
         fi
 
-        sleep_secs=$((sleep_secs_base * (retries - retry + 1)))
-
         restart_appinstalld
 
-        log "Sleeping for ${sleep_secs} seconds before trying again (${retry} tries remaining)"
-        sleep "${sleep_secs}"
+        log 'Retrying IPK installation once after appinstalld restart'
+        sleep 2
     done
 
     elevate_hbchannel
 
     log 'Homebrew Channel has been elevated'
+
+    harden_hbchannel_network
 
     if [ -f "${sd_script}" ]; then
         if check_sd_verify; then
@@ -293,11 +392,18 @@ perform_root() {
                 debug 'Not renaming invalid start-devmode.sh due to option'
             else
                 # Invalid start-devmode.sh and --leave-script not set
-                if mv -- "${sd_script}" "${sd_script}.backup"; then
-                    log 'Your start-devmode.sh failed verification and was renamed to prevent /media/developer from being wiped'
+                backup_target="${sd_script}.backup"
+                if [ -e "${backup_target}" ]; then
+                    backup_target="${sd_script}.backup.$(date -u '+%Y%m%dT%H%M%SZ')"
+                    log "Existing .backup preserved; using '${backup_target}'"
+                fi
+
+                if mv -- "${sd_script}" "${backup_target}"; then
+                    log "Your start-devmode.sh failed verification and was renamed to '${backup_target}' to prevent /media/developer from being wiped"
                     toast '<b>Warning:</b> Renamed start-devmode.sh to prevent deletion of apps'
                 else
-                    error 'Failed to rename bad start-devmode.sh. You will lose root on reboot!'
+                    error 'Failed to rename bad start-devmode.sh. Do not reboot; /media/developer may be wiped.'
+                    exit 1
                 fi
             fi
         else
@@ -428,5 +534,7 @@ else
         exit 1
     fi
 fi
+
+verify_ipk "${ipk}"
 
 perform_root

@@ -12,6 +12,7 @@ from __future__ import print_function
 
 import argparse
 import os
+import secrets
 import sys
 import time
 
@@ -97,6 +98,7 @@ def main(argv=None):
         return 2
 
     tracker = slopbro.RequestedFilesTracker(COMPAT_FILES)
+    token = secrets.token_urlsafe(16)
     server = None
     client = None
     try:
@@ -108,11 +110,13 @@ def main(argv=None):
             allow_filesystem_fallback=True,
             bind_host=local_ip,
             preferred_port=args.port,
+            token=token,
         )
         attempt = int(time.time())
-        url = "http://%s:%d/run-webos26-compatible.html?attempt=%d" % (
+        url = "http://%s:%d/p/%s/run-webos26-compatible.html?attempt=%d" % (
             local_ip,
             server.server_port,
+            token,
             attempt,
         )
         print("[ok] Compatibility files are ready at:")

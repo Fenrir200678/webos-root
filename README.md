@@ -8,8 +8,9 @@ The repository includes a single **webOS 26 Root Wizard** for macOS and Windows.
 
 - automatically finds an LG TV on the local network or accepts an IP manually;
 - selects a local route to the TV without requiring you to disable VPN; for non-standard routing, you can specify the address manually;
-- checks for Voice Assistant and for the absence of LG Developer Mode;
+- checks for Voice Assistant, for the absence of LG Developer Mode, and for a webOS 26 SDK when the TV reports one;
 - uses the compatible webOS 26 loader directly, with one installer attempt;
+- serves the local payload under a random per-run URL path;
 - sends files sequentially and waits for each download's completion, rejecting a numeric non-2xx status when the service reports one;
 - records the service launch response so that file transfer can be distinguished from installer execution;
 - stops on missing files or a rejected launch instead of retrying automatically;
@@ -71,6 +72,8 @@ During root:
 - do not close the service page until the command has finished;
 - do not install or leave LG Developer Mode before rebooting the rooted TV;
 - never overwrite `kernel`, `rootfs`, or `tvservice`.
+
+The installer verifies the pinned Homebrew Channel v0.7.3 IPK by SHA-256, allows only one IPK-install retry, and copies the original `devmode_enabled`, `start-devmode.sh`, and `start-devmode.sig` to `/media/internal/slopbro-backup-<timestamp>/` before modifying them. It also disables HBC's normal unauthenticated telnet-root shell; the HBC failsafe can still open a temporary root telnet after a startup crash. That emergency copy is **not** a full system backup; create and verify a separate read-only inventory/backup before persistent changes.
 
 ## 1. Find the TV's IP address
 
