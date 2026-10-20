@@ -52,46 +52,93 @@ class LaunchTelemetryTest(unittest.TestCase):
         self.assertFalse(self.tracker.wait_for_all(0))
 
 
-class WizardFallbackTest(unittest.TestCase):
-    def make_engine(self, primary, compatible, homebrew):
+class WizardCompatibilityFlowTest(unittest.TestCase):
+    def make_engine(self, compatible, homebrew, proceed=True, root_ok=True):
         engine = RootEngine.__new__(RootEngine)
         engine.tv_ip = "192.0.2.5"
         engine.local_ip_override = "192.0.2.10"
         engine.log = Mock()
         engine.status = Mock()
-        engine.ask_user = Mock(return_value=True)
+        engine.ask_user = Mock(side_effect=[proceed, root_ok])
         engine.check_prerequisites = Mock()
-        engine.primary_attempt = Mock(return_value=primary)
         engine.compatibility_attempt = Mock(return_value=compatible)
         engine.wait_for_homebrew = Mock(side_effect=homebrew)
         return engine
 
-    def test_rejected_primary_launch_uses_compatible_method(self):
+    def test_compatible_success_runs_exactly_once(self):
         engine = self.make_engine(
-            (True, {"returnValue": False, "error": "trusted locations"}),
             (True, {"returnValue": True}), [True],
         )
         engine.run()
-        engine.compatibility_attempt.assert_called_once_with(40)
-        engine.wait_for_homebrew.assert_called_once()
+        engine.compatibility_attempt.assert_called_once_with(100)
+        engine.wait_for_homebrew.assert_called_once_with()
+        self.assertEqual(engine.ask_user.call_count, 2)
 
-    def test_missing_homebrew_after_primary_uses_compatible_method(self):
-        engine = self.make_engine(
-            (True, {"returnValue": True}),
-            (True, {"returnValue": True}), [False, True],
-        )
+    def test_missing_files_does_not_retry(self):
+        engine = self.make_engine((False, None), [False])
+        with self.assertRaisesRegex(WizardError, "did not request all files"):
+            engine.run()
+        engine.compatibility_attempt.assert_called_once_with(100)
+        engine.wait_for_homebrew.assert_called_once_with(10)
+
+    def test_homebrew_appears_despite_missing_files(self):
+        engine = self.make_engine((False, None), [True])
         engine.run()
-        engine.compatibility_attempt.assert_called_once_with(40)
-        self.assertEqual(engine.wait_for_homebrew.call_count, 2)
+        engine.compatibility_attempt.assert_called_once_with(100)
+        engine.wait_for_homebrew.assert_called_once_with(10)
 
     def test_rejected_compatible_launch_is_an_error(self):
         engine = self.make_engine(
-            (True, {"returnValue": False, "error": "old method rejected"}),
-            (True, {"returnValue": False, "error": "new method rejected"}), [],
+            (True, {"returnValue": False, "error": "compatible rejected"}),
+            [False],
         )
-        with self.assertRaisesRegex(WizardError, "new method rejected"):
+        with self.assertRaisesRegex(WizardError, "compatible rejected"):
             engine.run()
-        engine.wait_for_homebrew.assert_not_called()
+        engine.compatibility_attempt.assert_called_once_with(100)
+        engine.wait_for_homebrew.assert_called_once_with(10)
+
+    def test_homebrew_appears_despite_rejected_launch(self):
+        engine = self.make_engine(
+            (True, {"returnValue": False, "error": "compatible rejected"}),
+            [True],
+        )
+        engine.run()
+        engine.compatibility_attempt.assert_called_once_with(100)
+        engine.wait_for_homebrew.assert_called_once_with(10)
+
+    def test_missing_homebrew_is_an_error(self):
+        engine = self.make_engine((True, {"returnValue": True}), [False])
+        with self.assertRaisesRegex(WizardError, "did not appear"):
+            engine.run()
+        engine.compatibility_attempt.assert_called_once_with(100)
+
+    def test_root_ok_declined_is_an_error(self):
+        engine = self.make_engine(
+            (True, {"returnValue": True}), [True], root_ok=False,
+        )
+        with self.assertRaisesRegex(WizardError, "Root OK was not confirmed"):
+            engine.run()
+        self.assertEqual(engine.ask_user.call_args_list[-1][0][0], "Check Root OK")
+
+    def test_user_cancels_before_attempt(self):
+        engine = self.make_engine((True, {"returnValue": True}), [], proceed=False)
+        with self.assertRaisesRegex(WizardError, "Stopped by the user"):
+            engine.run()
+        engine.compatibility_attempt.assert_not_called()
+
+
+class WizardLanguageTest(unittest.TestCase):
+    def test_wizard_source_has_no_cyrillic_strings(self):
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "webos_root_wizard.py"
+        )
+        with open(path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertFalse(
+            any("\u0400" <= character <= "\u04FF" for character in source),
+            "the wizard is English-only; translate new UI strings instead of "
+            "adding Cyrillic text",
+        )
 
 
 if __name__ == "__main__":

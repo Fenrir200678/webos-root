@@ -12,6 +12,31 @@ function runPage(file, search) {
   const timers = [];
   const calls = [];
   const beacons = [];
+  let nextTimerId = 1;
+
+  function fakeSetTimeout(fn) {
+    const timer = { id: nextTimerId++, fn, cancelled: false };
+    timers.push(timer);
+    return timer.id;
+  }
+
+  function fakeClearTimeout(id) {
+    const timer = timers.find(item => item.id === id);
+    if (timer) timer.cancelled = true;
+  }
+
+  function runNextTimer() {
+    for (let i = 0; i < timers.length; i++) {
+      const timer = timers[i];
+      if (!timer.cancelled) {
+        timer.cancelled = true;
+        timers.splice(i, 1);
+        timer.fn();
+        return true;
+      }
+    }
+    return false;
+  }
 
   function PalmServiceBridge() {
     this.call = (uri, payload) => {
@@ -19,7 +44,9 @@ function runPage(file, search) {
       if (uri.endsWith('/cancelAllDownloads')) {
         this.onservicecallback('{"returnValue":true}');
       } else if (uri.endsWith('/download')) {
-        this.onservicecallback('{"completed":true,"aborted":false,"interrupted":false}');
+        this.onservicecallback(
+          '{"completed":true,"aborted":false,"interrupted":false,"httpStatus":200}'
+        );
       } else if (uri.endsWith('/run')) {
         this.onservicecallback('{"returnValue":true}');
       }
@@ -38,19 +65,20 @@ function runPage(file, search) {
       Object.defineProperty(this, 'src', { set: url => beacons.push(url) });
     },
     Date,
-    setTimeout: fn => timers.push(fn),
+    setTimeout: fakeSetTimeout,
+    clearTimeout: fakeClearTimeout,
   };
   vm.runInNewContext(script, context, { filename: file });
 
   if (file === 'index-webos26.html') {
-    timers[0]();
-    const run = timers.find(fn => fn.name === 'runService');
-    assert.ok(run, 'primary service launch was not scheduled');
-    run();
+    runNextTimer();
+    const runTimer = timers.find(timer => timer.fn.name === 'runService');
+    assert.ok(runTimer, 'primary service launch was not scheduled');
+    runTimer.cancelled = true;
+    runTimer.fn();
   } else {
     for (let i = 0; i < 30 && !calls.some(c => c.uri.endsWith('/run')); i++) {
-      assert.ok(timers.length, 'compatible service launch was not scheduled');
-      timers.shift()();
+      assert.ok(runNextTimer(), 'compatible service launch was not scheduled');
     }
   }
 

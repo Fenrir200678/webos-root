@@ -1,90 +1,94 @@
-# Root на LG webOS 26: пошаговая инструкция
+# Root on LG webOS 26: a step-by-step guide
 
-Эта инструкция рассчитана на пользователя, который раньше не работал со SlopBro. Начните с графического мастера. При ручном запуске используйте основной способ; если загрузка или запуск остановились, перейдите к совместимому способу из раздела 7.
+This guide is intended for a user who has not worked with SlopBro before. Start with the graphical wizard. The wizard uses the compatible webOS 26 loader directly. For a manual run, the primary method is in section 6; the compatible fallback is in section 7.
 
-## Самый простой способ: графический мастер
+## The simplest way: the graphical wizard
 
-В репозитории есть единый **webOS 26 Root Wizard** для macOS и Windows. Он:
+The repository includes a single **webOS 26 Root Wizard** for macOS and Windows. It:
 
-- автоматически ищет LG TV в локальной сети либо принимает IP вручную;
-- выбирает локальный маршрут к ТВ без необходимости отключать VPN; при нестандартной маршрутизации адрес можно указать вручную;
-- проверяет наличие Voice Assistant и отсутствие LG Developer Mode;
-- сначала выполняет основной способ root;
-- при зависании, отказе запуска сервиса или отсутствии Homebrew переключается на совместимый загрузчик webOS 26;
-- записывает ответ запуска сервиса, чтобы отличать передачу файлов от выполнения установщика;
-- ждёт появления Homebrew Channel, открывает его и просит проверить `Root OK`;
-- сохраняет локальный журнал и ключ сопряжения в папке данных приложения.
+- automatically finds an LG TV on the local network or accepts an IP manually;
+- selects a local route to the TV without requiring you to disable VPN; for non-standard routing, you can specify the address manually;
+- checks for Voice Assistant and for the absence of LG Developer Mode;
+- uses the compatible webOS 26 loader directly, with one installer attempt;
+- sends files sequentially and waits for each download's completion, rejecting a numeric non-2xx status when the service reports one;
+- records the service launch response so that file transfer can be distinguished from installer execution;
+- stops on missing files or a rejected launch instead of retrying automatically;
+- waits for Homebrew Channel to appear, opens it, and asks you to verify `Root OK`;
+- saves a local log and pairing key in the application data folder.
 
-Полностью исключить участие владельца невозможно: телевизор сам требует подтвердить первое сопряжение, а зелёный статус `Root OK` необходимо увидеть на экране. Мастер не перезагружает телевизор до этого подтверждения.
+It is impossible to completely eliminate the owner's involvement: the TV itself requires confirmation of the first pairing, and the green `Root OK` status must be seen on the screen. The wizard does not reboot the TV before this confirmation.
 
-### Готовое приложение
+The wizard does **not** create a backup. Before the first persistent modification, create and verify a separate read-only backup/inventory. A raw or full-flash backup is not a proven brick recovery.
 
-Откройте [Releases](https://github.com/ihovsky/webos-root/releases) и скачайте файл из раздела **Assets** последнего выпуска:
+### Ready-made application
 
-- `webOS-Root-Wizard-macOS-Apple-Silicon.zip` — для Mac с процессором Apple Silicon;
-- `webOS-Root-Wizard-macOS-Intel.zip` — для Intel Mac.
+Open [Releases](https://github.com/ihovsky/webos-root/releases) and download the file from the **Assets** section of the latest release:
 
-Распакуйте архив и откройте `webOS Root Wizard.app`. На момент первого выпуска обновлённого мастера Windows `.exe` ещё не собран. На Windows скачайте **Source code (zip)** с той же страницы, установите Python 3 и запустите `start-windows.bat` из распакованной папки. Не путайте архив исходников с готовым приложением: для него нужен Python.
+- `webOS-Root-Wizard-macOS-Apple-Silicon.zip` — for Macs with an Apple Silicon processor;
+- `webOS-Root-Wizard-macOS-Intel.zip` — for Intel Macs.
 
-[Actions → Build desktop wizard](https://github.com/ihovsky/webos-root/actions/workflows/build-desktop.yml) предназначен для будущих автоматических сборок. Если запуск неуспешен, его артефакты недоступны.
+Unpack the archive and open `webOS Root Wizard.app`. At the time of the first release of the updated wizard, the Windows `.exe` was not yet built. On Windows, download **Source code (zip)** from the same page, install Python 3, and run `start-windows.bat` from the unpacked folder. Do not confuse the source archive with a ready-made application: the latter requires Python.
 
-Сборки пока не подписаны сертификатом разработчика. На macOS при первом запуске нажмите приложение правой кнопкой → **Открыть**. Когда появится Windows `.exe`, SmartScreen может попросить отдельно подтвердить его запуск.
+[Actions → Build desktop wizard](https://github.com/ihovsky/webos-root/actions/workflows/build-desktop.yml) is intended for future automated builds. If a run is unsuccessful, its artifacts are unavailable.
 
-### Запуск прямо из исходников
+The builds are not yet signed with a developer certificate. On macOS, on first launch, right-click the application → **Open**. When the Windows `.exe` becomes available, SmartScreen may ask you to confirm its launch separately.
 
-Если установлен Python 3:
+### Running directly from source
 
-- macOS: дважды нажмите `start-macos.command`;
-- Windows: дважды нажмите `start-windows.bat`.
+If Python 3 is installed:
 
-Либо запустите `python3 webos_root_wizard.py` на macOS или `py -3 webos_root_wizard.py` в Windows. Сторонние Python-библиотеки мастеру не нужны.
+- macOS: double-click `start-macos.command`;
+- Windows: double-click `start-windows.bat`.
 
-Мастер предназначен именно для экспериментального сценария webOS 26. После изменений от 29 сентября 2026 года он включает обход проверки пути сервиса из [SlopBro v0.1.0](https://github.com/throwaway96/slopbro/releases/tag/v0.1.0). Обновлённый мастер пока не проверен нами на телевизоре.
+Alternatively, run `python3 webos_root_wizard.py` on macOS or `py -3 webos_root_wizard.py` on Windows. The wizard does not need third-party Python libraries.
 
-Первоначальный метод был проверен 24 августа 2026 года на:
+The wizard is intended specifically for the experimental webOS 26 scenario. After the changes of September 29, 2026, it includes the service path check bypass from [SlopBro v0.1.0](https://github.com/throwaway96/slopbro/releases/tag/v0.1.0). The wizard now uses the compatibility loader directly and does not automatically fall back to the primary method. We have not yet tested the updated wizard on a TV.
+
+The original method was tested on August 24, 2026 on:
 
 - LG OLED77G6RLA;
-- прошивке `43.11.78`;
+- firmware `43.11.78`;
 - webOS 26, SDK `11.1.0` (major version `11`);
 - Homebrew Channel `0.7.3`.
 
-На других моделях и прошивках результат не гарантируется. Пользователь оригинального SlopBro [сообщил об успешном root на OLED55C2 с прошивкой 43.21.74 через v0.1.0](https://github.com/throwaway96/slopbro/issues/18); это сторонний отчёт, а не проверка этого мастера.
+Results are not guaranteed on other models and firmware. The user of the original SlopBro [reported a successful root on an OLED55C2 with firmware 43.21.74 via v0.1.0](https://github.com/throwaway96/slopbro/issues/18); this is a third-party report, not a test of this wizard.
 
-## Перед началом
+## Before you begin
 
-Понадобятся:
+You will need:
 
-- телевизор и компьютер в одной обычной локальной сети;
-- компьютер с macOS, Linux или Windows;
+- a TV and a computer on the same regular local network;
+- a computer with macOS, Linux, or Windows;
 - Python 3;
-- доступ телевизора в интернет для загрузки Homebrew Channel;
-- 10–15 минут без выключения телевизора.
+- internet access on the TV to download Homebrew Channel;
+- 10–15 minutes without turning off the TV;
+- a verified read-only backup/inventory, if you intend to make persistent changes. Rooting itself is persistent and has no tested brick recovery for every model; a raw or full-flash backup is not a proven recovery.
 
-Во время root:
+During root:
 
-- не обновляйте прошивку;
-- не выключайте питание телевизора;
-- не закрывайте служебную страницу, пока команда не завершилась;
-- не устанавливайте и не оставляйте LG Developer Mode перед перезагрузкой rooted-телевизора;
-- никогда не перезаписывайте `kernel`, `rootfs` или `tvservice`.
+- do not update the firmware;
+- do not turn off the TV's power;
+- do not close the service page until the command has finished;
+- do not install or leave LG Developer Mode before rebooting the rooted TV;
+- never overwrite `kernel`, `rootfs`, or `tvservice`.
 
-## 1. Узнайте IP-адрес телевизора
+## 1. Find the TV's IP address
 
-На телевизоре откройте сведения о текущем сетевом подключении и найдите поле «IP-адрес».
+On the TV, open the current network connection details and find the "IP address" field.
 
-Пример:
+Example:
 
 ```text
 192.168.1.50
 ```
 
-Дальше в командах вместо `192.168.1.50` используйте адрес своего телевизора.
+In the commands below, use your TV's address instead of `192.168.1.50`.
 
-## 2. Установите Python 3
+## 2. Install Python 3
 
-Проверьте Python в терминале.
+Check Python in the terminal.
 
-macOS или Linux:
+macOS or Linux:
 
 ```sh
 python3 --version
@@ -96,73 +100,73 @@ Windows PowerShell:
 py -3 --version
 ```
 
-Если команда показывает Python 3, можно продолжать. Сторонние Python-библиотеки не требуются.
+If the command shows Python 3, you can continue. Third-party Python libraries are not required.
 
-## 3. Скачайте этот репозиторий
+## 3. Download this repository
 
-Вариант через Git:
+Using Git:
 
 ```sh
 git clone https://github.com/ihovsky/webos-root.git
 cd webos-root
 ```
 
-Либо откройте страницу репозитория, нажмите **Code → Download ZIP**, распакуйте архив и откройте терминал в распакованной папке.
+Or open the repository page, click **Code → Download ZIP**, unpack the archive, and open a terminal in the unpacked folder.
 
-Проверьте, что вы находитесь в правильной папке:
+Check that you are in the correct folder:
 
 ```sh
 python3 slopbro.py --help
 ```
 
-В Windows используйте:
+On Windows, use:
 
 ```powershell
 py -3 slopbro.py --help
 ```
 
-## 4. Удалите LG Developer Mode
+## 4. Remove LG Developer Mode
 
-Если на телевизоре установлено официальное приложение **Developer Mode**, удалите его обычным способом из списка приложений.
+If the official **Developer Mode** app is installed on the TV, remove it in the usual way from the app list.
 
-Если Developer Mode не установлен, ничего делать не нужно.
+If Developer Mode is not installed, nothing needs to be done.
 
-Это важно: после успешного root приложение Developer Mode нельзя оставлять установленным перед перезагрузкой. Повторно устанавливать его на rooted-телевизор также не следует.
+This is important: after a successful root, the Developer Mode app must not be left installed before rebooting. It should also not be reinstalled on a rooted TV.
 
-## 5. Безопасно проверьте связь
+## 5. Safely test connectivity
 
-На macOS или Linux запустите:
+On macOS or Linux, run:
 
 ```sh
 python3 slopbro.py --test-server simple 192.168.1.50
 ```
 
-На Windows:
+On Windows:
 
 ```powershell
 py -3 slopbro.py --test-server simple 192.168.1.50
 ```
 
-Команда напечатает адрес примерно такого вида:
+The command will print an address approximately like this:
 
 ```text
 http://192.168.1.20:8080/
 ```
 
-Откройте этот адрес во встроенном браузере телевизора. Должна появиться строка:
+Open this address in the TV's built-in browser. The following line should appear:
 
 ```text
 Here's your slop, bro!
 ```
 
-После проверки вернитесь в терминал и нажмите `Ctrl+C`.
+After testing, return to the terminal and press `Ctrl+C`.
 
-Если страница не открылась:
+If the page did not open:
 
-1. Разрешите Python входящие подключения в брандмауэре. В Windows разрешайте только частные сети.
-2. Убедитесь, что телевизор и компьютер не подключены к гостевой Wi‑Fi-сети.
-3. Узнайте локальный IPv4 компьютера.
-4. Повторите команду с явным адресом компьютера:
+1. Allow incoming connections for Python in the firewall. On Windows, allow private networks only.
+2. Make sure the TV and the computer are not connected to a guest Wi‑Fi network.
+3. Find the computer's local IPv4 address.
+4. Repeat the command with the computer's explicit address:
 
 ```sh
 python3 slopbro.py --test-server simple \
@@ -170,11 +174,11 @@ python3 slopbro.py --test-server simple \
   192.168.1.50
 ```
 
-Не переходите к root, пока тестовая страница не открывается на ТВ.
+Do not proceed to root until the test page opens on the TV.
 
-## 6. Запустите основной способ root
+## 6. Run the primary root method
 
-На macOS или Linux:
+On macOS or Linux:
 
 ```sh
 python3 slopbro.py \
@@ -183,13 +187,13 @@ python3 slopbro.py \
   192.168.1.50
 ```
 
-На Windows:
+On Windows:
 
 ```powershell
 py -3 slopbro.py --debug --webos-version 11 192.168.1.50
 ```
 
-Если при проверке сети требовался `--local-ip`, используйте его и здесь:
+If the network test required `--local-ip`, use it here as well:
 
 ```sh
 python3 slopbro.py \
@@ -199,15 +203,15 @@ python3 slopbro.py \
   192.168.1.50
 ```
 
-Дальше:
+Then:
 
-1. На телевизоре появится запрос подключения устройства. Нажмите **Разрешить/Да**.
-2. Если macOS или Windows спросит разрешение для Python, разрешите доступ в локальной сети.
-3. Не выключайте телевизор и не закрывайте терминал.
-4. На экране ТВ может появиться служебная страница или чёрный экран — это допустимо.
-5. Дождитесь завершения загрузки файлов и установки Homebrew Channel.
+1. A device connection prompt will appear on the TV. Press **Allow/Yes**.
+2. If macOS or Windows asks for permission for Python, allow access on the local network.
+3. Do not turn off the TV or close the terminal.
+4. A service page or a black screen may appear on the TV — this is acceptable.
+5. Wait for the file downloads and Homebrew Channel installation to finish.
 
-Нормальный журнал выглядит примерно так:
+A normal log looks approximately like this:
 
 ```text
 registered
@@ -217,50 +221,50 @@ all tracked files were requested; checking service launch
 service launch accepted; confirm Root OK in Homebrew Channel
 ```
 
-После первого сопряжения рядом со скриптом появится файл вида `192.168.1.50.key`. Это локальный ключ управления телевизором. Не публикуйте его.
+After the first pairing, a file like `192.168.1.50.key` will appear next to the script. This is the local TV control key. Do not publish it.
 
-### Признаки успеха
+### Signs of success
 
-Root считается полученным только когда выполнены все условия:
+Root is considered obtained only when all conditions are met:
 
-1. В меню приложений появился **Homebrew Channel**.
-2. Homebrew Channel открывается.
-3. В настройках Homebrew Channel статус **Root** показывает `OK`.
+1. **Homebrew Channel** appears in the app menu.
+2. Homebrew Channel opens.
+3. In Homebrew Channel settings, the **Root** status shows `OK`.
 
-Если отображается `Root OK`:
+If `Root OK` is displayed:
 
-1. Убедитесь, что LG Developer Mode удалён.
-2. В Homebrew Channel откройте настройки.
-3. Нажмите **System reboot**.
-4. После загрузки снова откройте Homebrew Channel и проверьте `Root OK`.
+1. Make sure LG Developer Mode is removed.
+2. Open the settings in Homebrew Channel.
+3. Press **System reboot**.
+4. After boot, open Homebrew Channel again and check `Root OK`.
 
-Если Homebrew появился, но `Root OK` отсутствует, **не перезагружайте телевизор** и переходите к диагностике.
+If Homebrew appeared but `Root OK` is missing, **do not reboot the TV** and proceed to diagnostics.
 
-## 7. Если основной способ завис или запуск отклонён
+## 7. If the primary method hangs or the launch is rejected
 
-На прошивке `43.11.78` Download Manager иногда скачивает первый файл, но не продолжает последовательность. Признаки:
+On firmware `43.11.78`, Download Manager sometimes downloads the first file but does not continue the sequence. Signs:
 
-- терминал долго ждёт оставшиеся файлы;
-- на экране ничего не меняется;
-- Homebrew Channel не появился;
-- `Rooting complete` не отображалось.
+- the terminal waits a long time for the remaining files;
+- nothing changes on the screen;
+- Homebrew Channel did not appear;
+- `Rooting complete` was not displayed.
 
-Если файлы не запрошены в течение двух минут, остановите команду сочетанием `Ctrl+C`. Если после передачи файлов появляется `service launch rejected` или Homebrew не появляется, также используйте совместимый способ. Сообщение о передаче файлов само по себе не означает успешный root.
+If the files are not requested within two minutes, stop the command with `Ctrl+C`. If `service launch rejected` appears after the file transfer, or Homebrew does not appear, also use the compatible method. A file transfer message alone does not mean successful root.
 
-Теперь используйте совместимый помощник. Он отменяет зависшее задание Download Manager, отправляет файлы по одному и запускает тот же `autoroot.sh` через Voice Assistant.
+Now use the compatible helper. It cancels the stuck Download Manager job, sends the files one at a time, and launches the same `autoroot.sh` via Voice Assistant.
 
-### 7.1. Откройте Voice Assistant
+### 7.1. Open Voice Assistant
 
-На телевизоре:
+On the TV:
 
-1. Зажмите кнопку микрофона/AI на пульте.
-2. Скажите, например, «Открой настройки».
-3. Дождитесь появления панели ассистента.
-4. Не закрывайте панель кнопкой «Назад».
+1. Press and hold the microphone/AI button on the remote.
+2. Say, for example, "Open settings."
+3. Wait for the assistant panel to appear.
+4. Do not close the panel with the Back button.
 
-### 7.2. Запустите совместимый помощник
+### 7.2. Run the compatible helper
 
-macOS или Linux:
+macOS or Linux:
 
 ```sh
 python3 tools/webos26_compatible_launch.py 192.168.1.50
@@ -272,7 +276,7 @@ Windows:
 py -3 tools/webos26_compatible_launch.py 192.168.1.50
 ```
 
-Если раньше требовался явный адрес компьютера:
+If an explicit computer address was required earlier:
 
 ```sh
 python3 tools/webos26_compatible_launch.py \
@@ -280,106 +284,106 @@ python3 tools/webos26_compatible_launch.py \
   192.168.1.50
 ```
 
-Дальше:
+Then:
 
-1. Если ТВ снова попросит разрешить подключение — разрешите.
-2. Не закрывайте терминал и не выключайте телевизор.
-3. Помощник должен получить запросы всех пяти файлов.
-4. После строки `The TV requested every compatibility file` дождитесь ответа запуска сервиса и ещё 25 секунд.
-5. Откройте Homebrew Channel и проверьте `Root OK`.
+1. If the TV asks again to allow the connection, allow it.
+2. Do not close the terminal or turn off the TV.
+3. The helper should receive requests for all five files.
+4. After the line `The TV requested every compatibility file`, wait for the service launch response and another 25 seconds.
+5. Open Homebrew Channel and check `Root OK`.
 
-Если помощник пишет `The TV rejected the service launch`, сохраните полный вывод и не перезагружайте ТВ. Повторная загрузка тех же файлов без выяснения причины вряд ли поможет.
+If the helper says `The TV rejected the service launch`, save the full output and do not reboot the TV. Downloading the same files again without determining the cause is unlikely to help.
 
-Если помощник пишет, что часть файлов не была запрошена, снова откройте Voice Assistant и повторите команду один раз. Для новой попытки автоматически создаётся уникальный URL.
+If the helper says that some files were not requested, open Voice Assistant again and repeat the command once. A unique URL is created automatically for a new attempt.
 
-Если на экране или в журнале появился `Message not processed`, также заново откройте Voice Assistant и повторите совместимый запуск один раз.
+If `Message not processed` appears on the screen or in the log, also reopen Voice Assistant and repeat the compatible launch once.
 
-После `Root OK` выполните действия из раздела «Признаки успеха»: удалите Developer Mode, если он присутствует, и перезагрузите телевизор через Homebrew Channel.
+After `Root OK`, perform the steps in "Signs of success": remove Developer Mode if present, and reboot the TV via Homebrew Channel.
 
-## 8. Ошибка WSS и сертификат телевизора
+## 8. WSS error and the TV certificate
 
-Сообщение:
+The message:
 
 ```text
 The WSS connection failed almost immediately. In practice this usually means
 the browser blocked the TV self-signed certificate.
 ```
 
-обычно относится к запуску через браузерную страницу. Откройте на компьютере:
+usually refers to launching via a browser page. On the computer, open:
 
 ```text
 https://192.168.1.50:3001/
 ```
 
-и подтвердите переход к сайту с самоподписанным сертификатом. Страница после этого может быть пустой или показать HTTP-ошибку — важно, что браузер сохранил разрешение для сертификата.
+and confirm the transition to the site with the self-signed certificate. The page may then be blank or show an HTTP error — what matters is that the browser has saved the permission for the certificate.
 
-При запуске `slopbro.py` и `webos26_compatible_launch.py` проверка сертификата отключена внутри Python-клиента, поэтому открывать страницу сертификата обычно не требуется.
+When launching `slopbro.py` and `webos26_compatible_launch.py`, certificate verification is disabled inside the Python client, so opening the certificate page is usually not required.
 
-## 9. Частые проблемы
+## 9. Common problems
 
-### Телевизор не показывает запрос сопряжения
+### The TV does not show a pairing request
 
-- Проверьте IP-адрес ТВ.
-- Телевизор должен быть полностью включён, а не находиться в режиме ожидания.
-- Убедитесь, что TCP-порт `3001` доступен.
-- Удалите старый файл `IP_ТЕЛЕВИЗОРА.key` только если хотите принудительно создать новое сопряжение.
+- Check the TV's IP address.
+- The TV must be fully turned on, not in standby.
+- Make sure TCP port `3001` is available.
+- Delete the old `<TV-IP>.key` file only if you want to force a new pairing.
 
-### ТВ не забирает файлы с компьютера
+### The TV does not fetch files from the computer
 
-- Повторите безопасный тест из раздела 5.
-- Разрешите Python в брандмауэре.
-- Используйте `--local-ip` с LAN-адресом компьютера.
-- Проверьте, что на роутере отключена изоляция Wi‑Fi-клиентов.
+- Repeat the safe test from section 5.
+- Allow Python in the firewall.
+- Use `--local-ip` with the computer's LAN address.
+- Check that Wi‑Fi client isolation is disabled on the router.
 
-### Файлы переданы, но Homebrew Channel не появился
+### Files transferred but Homebrew Channel did not appear
 
-- В графическом мастере нажмите **«Открыть папку журнала»** и сохраните `wizard.log`.
-- При ручном запуске сохраните полный вывод терминала, особенно строку `service launch response` или `service launch rejected`.
-- Укажите модель ТВ, номер прошивки и версию webOS. Не прикладывайте файл `*.key`: это ключ сопряжения.
-- Не перезагружайте ТВ, пока статус `Root OK` не подтверждён.
+- In the graphical wizard, click **"Open log folder"** and save `wizard.log`.
+- For a manual run, save the full terminal output, especially the `service launch response` or `service launch rejected` line.
+- Provide the TV model, firmware number, and webOS version. Do not attach the `*.key` file: it is the pairing key.
+- Do not reboot the TV until `Root OK` is confirmed.
 
-### На телевизоре чёрный экран
+### Black screen on the TV
 
-Во время запуска Voice Assistant и служебной страницы это допустимо. Не нажимайте кнопки, пока помощник передаёт файлы. После подтверждённого `Root OK` можно нажать Home.
+This is acceptable while Voice Assistant and the service page are launching. Do not press buttons while the helper is transferring files. After `Root OK` is confirmed, you can press Home.
 
-### Появилась плашка «подключение к серверу нестабильно»
+### The "connection to the server is unstable" banner appears
 
-Служебное окно не смогло открыть локальную страницу. Нажмите «Назад» один раз, снова откройте Voice Assistant и повторите совместимый запуск с правильным `--local-ip`.
+The service window could not open the local page. Press Back once, reopen Voice Assistant, and repeat the compatible launch with the correct `--local-ip`.
 
-### Homebrew установился, но root не подтверждён
+### Homebrew installed but root not confirmed
 
-Статус `unelevated` означает, что приложение установлено, но root не получен. Ответ `service launch response: {"returnValue": true}` подтверждает только принятие команды сервисом, а не успешное завершение `autoroot.sh` или повышение прав Homebrew Channel.
+The `unelevated` status means that the app is installed but root was not obtained. The response `service launch response: {"returnValue": true}` only confirms that the service accepted the command, not that `autoroot.sh` completed successfully or that Homebrew Channel was elevated.
 
-Не перезагружайте ТВ, не удаляйте Homebrew Channel и не устанавливайте Developer Mode. Сохраните `wizard.log` или полный вывод терминала и фото статуса. Если у вас уже есть доступ к файловой системе ТВ, приложите также `/tmp/autoroot.log` и `/tmp/slopbro-webos26-result`: они помогут выяснить, на каком шаге остановился установщик. Не запускайте мастер повторно поверх установленного Homebrew до выяснения причины.
+Do not reboot the TV, do not remove Homebrew Channel, and do not install Developer Mode. Save `wizard.log` or the full terminal output and a photo of the status. If you already have access to the TV file system, also include `/tmp/autoroot.log` and `/tmp/slopbro-webos26-result`: they will help determine at which step the installer stopped. Do not run the wizard again over an installed Homebrew until the cause is determined.
 
-## 10. SSH после успешного root — необязательно
+## 10. SSH after successful root — optional
 
-Для самого root SSH не нужен. Если требуется удалённый доступ:
+SSH is not needed for root itself. If remote access is required:
 
-1. Откройте настройки Homebrew Channel.
-2. Включите SSH.
-3. Оставьте Telnet выключенным.
-4. Настройте отдельный SSH-ключ и проверьте вход как `root` на порту `22`.
+1. Open Homebrew Channel settings.
+2. Enable SSH.
+3. Leave Telnet disabled.
+4. Set up a separate SSH key and verify login as `root` on port `22`.
 
-Homebrew Channel использует временный стандартный пароль `alpine`, пока не установлен `authorized_keys`. Не оставляйте этот пароль единственной защитой SSH.
+Homebrew Channel uses the temporary default password `alpine` until `authorized_keys` is installed. Do not leave this password as the only SSH protection.
 
-Пример создания ключа на macOS/Linux:
+Example of creating a key on macOS/Linux:
 
 ```sh
 ssh-keygen -t ed25519 -f ~/.ssh/lg-tv-root_ed25519 -C lg-tv-root
 ```
 
-## Что находится в репозитории
+## What is in the repository
 
-- `webos_root_wizard.py` — графический автоматический мастер macOS/Windows;
-- `start-macos.command` и `start-windows.bat` — запуск мастера из исходников двойным нажатием;
-- `.github/workflows/build-desktop.yml` — автоматическая сборка `.app` и `.exe`;
-- `slopbro.py` — основной запуск;
-- `tools/webos26_compatible_launch.py` — совместимый повторный запуск webOS 26;
-- `wwwroot/index-webos26.html` — основной загрузчик;
-- `wwwroot/run-webos26-compatible.html` — последовательный совместимый загрузчик;
-- `wwwroot/autoroot-webos26.sh` — установщик Homebrew Channel;
-- `UPSTREAM_README.md` — оригинальная документация SlopBro;
-- `COPYING` — лицензия AGPLv3.
+- `webos_root_wizard.py` — the graphical automated macOS/Windows wizard;
+- `start-macos.command` and `start-windows.bat` — launch the wizard from source by double-clicking;
+- `.github/workflows/build-desktop.yml` — automated build of `.app` and `.exe`;
+- `slopbro.py` — the primary launcher;
+- `tools/webos26_compatible_launch.py` — the compatible webOS 26 relaunch;
+- `wwwroot/index-webos26.html` — the primary loader;
+- `wwwroot/run-webos26-compatible.html` — the sequential compatible loader;
+- `wwwroot/autoroot-webos26.sh` — the Homebrew Channel installer;
+- `UPSTREAM_README.md` — the original SlopBro documentation;
+- `COPYING` — the AGPLv3 license.
 
-Основа проекта: [throwaway96/slopbro](https://github.com/throwaway96/slopbro), исходная база `da374e5f10eff26b7df323ef0c2bc8470b142501`; обход проверки пути сервиса адаптирован из [v0.1.0 (`21023d5`)](https://github.com/throwaway96/slopbro/commit/21023d56ca424607bb03d2939609cc658c655fc7). Самопроверка без телевизора: `python3 webos_root_wizard.py --self-test`, `python3 -m unittest discover -s tests -v` и `node tests/payloads.test.js`.
+Project basis: [throwaway96/slopbro](https://github.com/throwaway96/slopbro), initial base `da374e5f10eff26b7df323ef0c2bc8470b142501`; the service path check bypass is adapted from [v0.1.0 (`21023d5`)](https://github.com/throwaway96/slopbro/commit/21023d56ca424607bb03d2939609cc658c655fc7). Self-test without a TV: `python3 webos_root_wizard.py --self-test`, `python3 -m unittest discover -s tests -v`, `node tests/payloads.test.js`, `node tests/compat_loader.test.js`, and `node tests/root_diagnostic_payload.test.js`.

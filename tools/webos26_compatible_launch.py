@@ -106,7 +106,7 @@ def main(argv=None):
             COMPAT_FILES,
             allow_embedded_assets=False,
             allow_filesystem_fallback=True,
-            bind_host="0.0.0.0",
+            bind_host=local_ip,
             preferred_port=args.port,
         )
         attempt = int(time.time())
