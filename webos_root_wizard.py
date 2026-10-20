@@ -46,8 +46,10 @@ DISCOVERY_TARGETS = (
 
 def bundle_root():
     """Return the checkout root or PyInstaller's extracted data directory."""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return sys._MEIPASS
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return meipass
     return os.path.dirname(os.path.abspath(__file__))
 
 
@@ -170,6 +172,8 @@ class RootEngine(object):
         self.log("Connecting to the TV over the secure local channel…")
         source = (self.local_ip, 0)
         stored_key = self.load_key()
+        client = None
+        new_key = ""
         for attempt in range(2):
             ws = slopbro.WebSocket.connect(
                 self.tv_ip,
@@ -194,6 +198,8 @@ class RootEngine(object):
                     os.unlink(self.key_file)
                 except OSError:
                     pass
+        if client is None:
+            raise WizardError("Could not establish an SSAP connection.")
         if new_key and new_key != stored_key:
             self.save_key(new_key)
             self.log(
@@ -379,7 +385,7 @@ class RootEngine(object):
                     "save the log for diagnostics. Reopen Voice Assistant and "
                     "start again manually."
                 )
-        elif self.launch_rejected(launch_response):
+        elif launch_response is not None and self.launch_rejected(launch_response):
             if self.wait_for_homebrew(10):
                 self.log(
                     "Homebrew appeared despite a rejected launch response; "
